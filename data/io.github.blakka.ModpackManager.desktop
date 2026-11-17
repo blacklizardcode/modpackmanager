@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Modpack Manager
+GenericName=Minecraft Modpack Editor
+Comment=Edit Minecraft modpacks from Modrinth and CurseForge
+Exec=modpackmanager %f
+Icon=package-x-generic
+Terminal=false
+Categories=Game;Utility;
+Keywords=minecraft;modpack;modrinth;curseforge;mrpack;
+MimeType=application/x-modrinth-modpack+zip;application/x-modpackmanager;
+StartupWMClass=modpackmanager-gtk
