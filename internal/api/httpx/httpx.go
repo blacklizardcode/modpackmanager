@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"modpackmanager/internal/version"
 )
 
 // UserAgent identifies the app to the APIs (Modrinth requires a unique one).
-const UserAgent = "modpackmanager/0.1.0 (desktop modpack editor; https://github.com/blakka/modpackmanager)"
+var UserAgent = "modpackmanager/" + version.String() + " (desktop modpack editor; https://github.com/blacklizardcode/modpackmanager)"
 
 // DefaultClient has sane timeouts.
 var DefaultClient = &http.Client{Timeout: 60 * time.Second}
