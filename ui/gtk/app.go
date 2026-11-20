@@ -10,6 +10,7 @@ import (
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/core/glib"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
@@ -32,11 +33,12 @@ type App struct {
 	ed     editor
 
 	shortcutsInstalled bool
+	jarIcons           map[string]*gdk.Texture // icons inside stored jars, by SHA-1 (nil: none)
 }
 
 // Run starts the GTK main loop.
 func Run(args []string) int {
-	a := &App{cfg: config.Load()}
+	a := &App{cfg: config.Load(), jarIcons: map[string]*gdk.Texture{}}
 	a.svc = core.New(a.cfg.APIKey())
 	a.app = adw.NewApplication(appID, gio.ApplicationHandlesOpen)
 	a.app.ConnectActivate(func() { a.activate(""); a.showWelcome() })

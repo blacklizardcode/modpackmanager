@@ -94,6 +94,7 @@ func ReadCurseForge(zr *zip.Reader) (*model.Pack, error) {
 		return nil, err
 	}
 	p.Overrides = ov
+	promoteJars(p)
 	return p, nil
 }
 

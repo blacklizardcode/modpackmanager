@@ -220,21 +220,30 @@ func applyCFMod(m *model.Mod, cm *curseforge.Mod) {
 }
 
 func (s *Service) matchModrinthByHash(ctx context.Context, p *model.Pack, rep *Report) {
+	s.matchModrinthMods(ctx, p.Mods, rep)
+}
+
+// matchModrinthMods links mods without a Modrinth reference to the Modrinth
+// version whose file has the same SHA-1, and returns the mods it linked. A
+// stored jar that turns out to be on Modrinth stops being stored: the pack
+// links to Modrinth's copy, which is byte for byte the same file.
+func (s *Service) matchModrinthMods(ctx context.Context, mods []*model.Mod, rep *Report) []*model.Mod {
 	var hashes []string
-	for _, m := range p.Mods {
+	for _, m := range mods {
 		if m.Modrinth == nil && m.File.SHA1 != "" {
 			hashes = append(hashes, strings.ToLower(m.File.SHA1))
 		}
 	}
 	if len(hashes) == 0 {
-		return
+		return nil
 	}
 	found, err := s.MR.VersionsByHash(ctx, hashes, "sha1")
 	if err != nil {
 		rep.Warn("Modrinth hash lookup failed: %v", err)
-		return
+		return nil
 	}
-	for _, m := range p.Mods {
+	var linked []*model.Mod
+	for _, m := range mods {
 		if m.Modrinth != nil || m.File.SHA1 == "" {
 			continue
 		}
@@ -254,13 +263,24 @@ func (s *Service) matchModrinthByHash(ctx context.Context, p *model.Pack, rep *R
 				}
 			}
 		}
+		if len(m.File.URLs) > 0 {
+			m.File.Data = nil
+		}
+		linked = append(linked, m)
 	}
+	return linked
 }
 
 func (s *Service) enrichModrinth(ctx context.Context, p *model.Pack, rep *Report) {
+	s.enrichModrinthMods(ctx, p.Mods, rep)
+}
+
+// enrichModrinthMods fills in names, icons, authors and sides for mods with
+// a Modrinth reference.
+func (s *Service) enrichModrinthMods(ctx context.Context, mods []*model.Mod, rep *Report) {
 	idSet := map[string]bool{}
 	var versionIDs []string
-	for _, m := range p.Mods {
+	for _, m := range mods {
 		if m.Modrinth != nil && m.Modrinth.ProjectID != "" {
 			idSet[m.Modrinth.ProjectID] = true
 			if m.Modrinth.VersionID != "" {
@@ -305,7 +325,7 @@ func (s *Service) enrichModrinth(ctx context.Context, p *model.Pack, rep *Report
 			}
 		}
 	}
-	for _, m := range p.Mods {
+	for _, m := range mods {
 		if m.Modrinth == nil {
 			continue
 		}

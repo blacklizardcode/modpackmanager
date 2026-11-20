@@ -68,6 +68,7 @@ func Run(args []string) int {
 	a.stack.AddWidget(a.welcome)
 	a.stack.AddWidget(a.editorW)
 	a.win.SetCentralWidget(a.stack.QWidget)
+	a.acceptJarDrops()
 	a.showWelcome()
 
 	a.win.OnCloseEvent(func(super func(*qt.QCloseEvent), ev *qt.QCloseEvent) {
@@ -134,6 +135,7 @@ func (a *App) buildToolbar() {
 	act("Save", "Save as .mpm", []string{"document-save"}, qt.NewQKeySequence6(qt.QKeySequence__Save), func() { a.save() }, true)
 	tb.AddSeparator()
 	act("Add Mods", "Search Modrinth and CurseForge", []string{"list-add"}, qt.NewQKeySequence2("Ctrl+Shift+A"), a.showSearch, true)
+	act("Add JAR", "Add .jar files from this computer (Ctrl+Shift+J). You can also drop them on the window.", []string{"document-import", "archive-insert", "document-open"}, qt.NewQKeySequence2("Ctrl+Shift+J"), a.chooseJars, true)
 	act("New Group", "Create a group", []string{"folder-new"}, nil, a.newGroup, true)
 	act("Pack Settings", "Name, version, Minecraft version and loader", []string{"configure", "document-properties"}, nil, a.showPackSettings, true)
 	tb.AddSeparator()
@@ -417,4 +419,93 @@ func (a *App) newPack() {
 			}
 		})
 	}()
+}
+
+// ---------------------------------------------------------------------------
+// Adding jar files
+
+const jarFilter = "Mod files (*.jar *.JAR);;All files (*)"
+
+func (a *App) chooseJars() {
+	if a.doc == nil {
+		return
+	}
+	paths := qt.QFileDialog_GetOpenFileNames4(a.win.QWidget, "Add JAR Files", a.cfg.LastDir, jarFilter)
+	if len(paths) == 0 {
+		return
+	}
+	a.cfg.LastDir = filepath.Dir(paths[0])
+	_ = a.cfg.Save()
+	a.addJarPaths(paths)
+}
+
+// addJarPaths reads and looks up the jars off the UI thread, then adds them.
+func (a *App) addJarPaths(paths []string) {
+	doc := a.doc
+	if doc == nil || len(paths) == 0 {
+		return
+	}
+	a.status("Adding %d file%s…", len(paths), plural(len(paths)))
+	go func() {
+		prep := a.svc.PrepareJars(context.Background(), core.ReadJarFiles(paths), core.JarOptions{})
+		ui(func() {
+			if a.doc != doc {
+				return // the pack was closed meanwhile
+			}
+			results := prep.Apply(doc.Pack)
+			if core.JarsChanged(results) {
+				a.markDirty()
+				a.refresh()
+			}
+			title, problems := core.JarSummary(results, prep.Report)
+			a.status("%s", title)
+			if len(problems) > 0 {
+				box := qt.NewQMessageBox6(qt.QMessageBox__Warning, title, "• "+strings.Join(problems, "\n• "), qt.QMessageBox__Ok, a.win.QWidget)
+				box.SetTextFormat(qt.PlainText)
+				box.Exec()
+			}
+		})
+	}()
+}
+
+// localFiles returns the files on this computer in a drag's data.
+func localFiles(md *qt.QMimeData) []string {
+	if md == nil || !md.HasUrls() {
+		return nil
+	}
+	var out []string
+	for _, u := range md.Urls() {
+		if u.IsLocalFile() {
+			out = append(out, u.ToLocalFile())
+		}
+	}
+	return out
+}
+
+// acceptJarDrops lets jar files (or a mods folder) be dropped on the window.
+func (a *App) acceptJarDrops() {
+	a.win.SetAcceptDrops(true)
+	a.win.OnDragEnterEvent(func(super func(*qt.QDragEnterEvent), ev *qt.QDragEnterEvent) {
+		if a.doc != nil && len(localFiles(ev.MimeData())) > 0 {
+			ev.AcceptProposedAction()
+			return
+		}
+		super(ev)
+	})
+	a.win.OnDragMoveEvent(func(super func(*qt.QDragMoveEvent), ev *qt.QDragMoveEvent) {
+		if a.doc != nil && len(localFiles(ev.MimeData())) > 0 {
+			ev.AcceptProposedAction()
+			return
+		}
+		super(ev)
+	})
+	a.win.OnDropEvent(func(super func(*qt.QDropEvent), ev *qt.QDropEvent) {
+		paths := localFiles(ev.MimeData())
+		if a.doc == nil || len(paths) == 0 {
+			super(ev)
+			return
+		}
+		ev.AcceptProposedAction()
+		a.addJarPaths(paths)
+	})
 }

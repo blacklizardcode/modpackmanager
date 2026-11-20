@@ -5,6 +5,7 @@ A native desktop editor for Minecraft modpacks, written in Go.
 - Opens **Modrinth `.mrpack`**, **CurseForge `.zip`** and its own **`.mpm`** files
 - Group mods, set per-mod client/server side, keep notes
 - Search and add mods from **Modrinth** and **CurseForge** (required dependencies are added automatically)
+- Add your own **`.jar` files** (Add Mods ▾ → Add JAR Files…, Ctrl+Shift+J, or drag them onto the window; a dropped folder adds the jars in it). A jar that is on Modrinth is linked to it; any other jar is stored in the pack and bundled into exports. Name, version, side and icon come from the jar's `fabric.mod.json`, `quilt.mod.json` or `mods.toml`, and adding a newer build of a stored jar replaces the old one
 - Descriptions render natively: Markdown (Modrinth) and HTML (CurseForge), including images, lists, tables and code
 - Three export buttons: **Client**, **Common** (client + server) and **Server**, each as `.mrpack`, CurseForge `.zip`, or a ready-to-run zip with the jars downloaded and hash-checked
 - Native look per platform: **GTK4 + libadwaita** on GNOME and most Linux desktops, **Qt 6** on KDE Plasma, Windows and macOS. The `modpackmanager` launcher picks the right one (`MPM_UI=gtk|qt` to override).
@@ -77,11 +78,13 @@ modpackmanager convert pack.zip pack.mpm      # import into the .mpm format
 modpackmanager export pack.mpm server zip --with-common   # server pack with jars
 modpackmanager export pack.mpm client mrpack              # client-only mods
 modpackmanager export pack.mpm common curseforge          # mods needed on both sides
+modpackmanager add pack.mpm mymod-1.2.jar --side client   # add jar files (or a folder of them)
 ```
 
 Export targets: `client` (client-only mods), `common` (needed on both), `server` (server-only mods), `full`.
 `--with-common` adds the common mods to a client/server export so it is installable on its own (the GUI does this by default for server exports, because a server can't start without them).
 `--embed` puts jars that aren't hosted on Modrinth inside the `.mrpack` instead of linking to them.
+`add` works on `.mpm` files; `--side` sets (and locks) the side, `--offline` skips the Modrinth lookup.
 
 ## CurseForge API key
 
@@ -95,7 +98,8 @@ Without a key, CurseForge packs still open and save, but their mods only show as
 2. A one-sided `env` in an imported `.mrpack` is kept (the pack author chose it).
 3. Modrinth's version `environment` field, then the project's `client_side`/`server_side`.
 4. CurseForge's `Client`/`Server` file tags; CurseForge files are also matched on Modrinth by SHA-1 to get better side data.
-5. Otherwise *Unknown*, which exports as common (the safe choice). Server exports warn about every unknown mod.
+5. For a jar you add (or one an imported pack bundles in `overrides/mods/`): Fabric's and Quilt's `environment` field. Forge metadata has no such field, so Forge jars start as *Unknown*. A jar in `client-overrides/` or `server-overrides/` keeps that side.
+6. Otherwise *Unknown*, which exports as common (the safe choice). Server exports warn about every unknown mod.
 
 ## The `.mpm` format
 
@@ -103,12 +107,13 @@ A zip archive:
 
 ```
 modpackmanager.json    {"format":"modpackmanager","formatVersion":1, name, version, minecraft, loader, loaderVersion, groups[], mods[]}
+files/<sha1>/<name>    jar files the pack stores itself
 overrides/             files for client and server
 client-overrides/      client-only files
 server-overrides/      server-only files
 ```
 
-Each mod stores its name, side (+ whether you locked it), group, notes, file path/hashes/download URLs, and its Modrinth and/or CurseForge IDs. Saves are atomic (temp file + rename).
+Each mod stores its name, side (+ whether you locked it), group, notes, file path/hashes/download URLs, and its Modrinth and/or CurseForge IDs; a stored jar also records its mod id, version and loaders. Stored jars are checked against their SHA-1 when the pack is opened. A pack that stores jars is written as `formatVersion` 2, so older versions of the app refuse it instead of dropping the jars; other packs stay at 1. Jars that an imported pack keeps in an `overrides/mods/` folder are turned into mod entries the same way. Saves are atomic (temp file + rename).
 
 ## Releases and CI
 
@@ -125,7 +130,8 @@ Running the workflow by hand (Actions → CI → Run workflow) does everything e
 ## Known limitations
 
 - **Windows and macOS builds are not verified.** The Windows zip comes from a CI job that has never run on a real runner; if it fails it is left out of the release (with a warning) rather than blocking it. There is no macOS release at all.
-- The Nix package has so far only been evaluated, never built, and the Linux tarballs have only been run on the machine that built them.
+- The Linux tarballs and the Nix package are built and tested in CI; on desktops they have only been tried on X11 so far.
 - **Modrinth's website only accepts `.mrpack` files whose downloads come from Modrinth, GitHub or GitLab.** Mods only on CurseForge are linked to CurseForge's CDN, which launchers like Prism accept but modrinth.com rejects. Use `--embed` (or the Embed option) to bundle those jars, but note that redistributing jars may break a mod's license or the author's CurseForge distribution setting.
 - CurseForge sometimes hides a file's download URL (author opted out of third-party downloads); the app falls back to the CDN URL, which can still fail for those files. Failed downloads are listed after an export.
 - Modrinth's side metadata is set by mod authors and is sometimes wrong; check the server export warnings and lock sides by hand where needed.
+- **Jars you add are bundled into every export.** That is fine for your own mods and private packs, but redistributing someone else's jar may break its license. Added jars are only matched against Modrinth (by SHA-1): a jar that is only on CurseForge is stored, not linked.

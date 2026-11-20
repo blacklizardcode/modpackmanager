@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
+	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	glibv2 "github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -46,13 +48,18 @@ func (a *App) showEditor(doc *core.Document) {
 	a.ed.title = adw.NewWindowTitle(doc.Title(), "")
 	hb.SetTitleWidget(a.ed.title)
 
-	add := gtk.NewButton()
+	// "Add Mods" searches; its drop-down adds jar files from disk.
+	add := adw.NewSplitButton()
 	addContent := adw.NewButtonContent()
 	addContent.SetIconName("list-add-symbolic")
 	addContent.SetLabel("Add Mods")
 	add.SetChild(addContent)
 	add.AddCSSClass("suggested-action")
 	add.SetTooltipText("Search Modrinth and CurseForge (Ctrl+Shift+A)")
+	add.SetDropdownTooltip("More ways to add mods")
+	addMenu := gio.NewMenu()
+	addMenu.Append("Add JAR Files…", "win.add-jars")
+	add.SetMenuModel(addMenu)
 	add.ConnectClicked(a.showSearch)
 	hb.PackStart(add)
 
@@ -152,6 +159,29 @@ func (a *App) showEditor(doc *core.Document) {
 	a.ed.actionBar.SetRevealed(false)
 	tv.AddBottomBar(a.ed.actionBar)
 
+	// Jar files (or a mods folder) dropped anywhere on the editor are added.
+	drop := gtk.NewDropTarget(gdk.GTypeFileList, gdk.ActionCopy)
+	drop.ConnectDrop(func(v *coreglib.Value, _, _ float64) bool {
+		fl, ok := v.GoValue().(*gdk.FileList)
+		if !ok || a.doc != doc {
+			return false
+		}
+		var paths []string
+		for _, f := range fl.Files() {
+			if p := f.Path(); p != "" {
+				paths = append(paths, p)
+			}
+		}
+		if len(paths) == 0 {
+			a.toast("Only files on this computer can be added")
+			return false
+		}
+		a.addJarPaths(paths)
+		return true
+	})
+	tv.AddController(drop)
+	tv.AddCSSClass("mpm-dropzone")
+
 	a.toasts.SetChild(tv)
 	a.installShortcuts()
 	a.refreshList()
@@ -205,7 +235,17 @@ func (a *App) installShortcuts() {
 	add("<Control>o", func() { a.confirmDiscard(a.chooseOpen) })
 	add("<Control>f", func() { a.ed.filter.GrabFocus() })
 	add("<Control><Shift>a", a.showSearch)
+	add("<Control><Shift>j", a.chooseJars)
 	a.win.AddController(sc)
+
+	// Used by the "Add Mods" drop-down menu.
+	addJars := gio.NewSimpleAction("add-jars", nil)
+	addJars.ConnectActivate(func(*glibv2.Variant) {
+		if a.doc != nil {
+			a.chooseJars()
+		}
+	})
+	a.win.AddAction(addJars)
 }
 
 func (a *App) markDirty() {
@@ -234,13 +274,19 @@ func (a *App) refreshList() {
 		st := adw.NewStatusPage()
 		st.SetIconName("list-add-symbolic")
 		st.SetTitle("No mods yet")
-		st.SetDescription("Add mods from Modrinth or CurseForge to get started.")
+		st.SetDescription("Add mods from Modrinth or CurseForge, or drop .jar files here.")
+		btns := gtk.NewBox(gtk.OrientationHorizontal, 12)
+		btns.SetHAlign(gtk.AlignCenter)
 		b := gtk.NewButtonWithLabel("Add Mods")
 		b.AddCSSClass("suggested-action")
 		b.AddCSSClass("pill")
-		b.SetHAlign(gtk.AlignCenter)
 		b.ConnectClicked(a.showSearch)
-		st.SetChild(b)
+		j := gtk.NewButtonWithLabel("Add JAR Files…")
+		j.AddCSSClass("pill")
+		j.ConnectClicked(a.chooseJars)
+		btns.Append(b)
+		btns.Append(j)
+		st.SetChild(btns)
 		a.ed.list.Append(st)
 		return
 	}
@@ -291,7 +337,7 @@ func (a *App) refreshList() {
 		st := adw.NewStatusPage()
 		st.SetIconName("edit-find-symbolic")
 		st.SetTitle("No matching mods")
-		st.SetDescription("Filters: side:client|server|both|unknown, source:modrinth|curseforge, group:name, type:mod|resourcepack|shader")
+		st.SetDescription("Filters: side:client|server|both|unknown, source:modrinth|curseforge|local, group:name, type:mod|resourcepack|shader")
 		a.ed.list.Append(st)
 	}
 }
@@ -338,12 +384,16 @@ func (a *App) modRow(m *model.Mod, terms []string) *adw.ActionRow {
 		row.AddPrefix(cb)
 		row.SetActivatableWidget(cb)
 	} else {
-		row.AddPrefix(a.iconWidget(a.ed.ctx, m.IconURL, 32, "application-x-addon-symbolic"))
+		if m.IconURL == "" && m.File.Stored() {
+			row.AddPrefix(a.jarIconWidget(m, 32))
+		} else {
+			row.AddPrefix(a.iconWidget(a.ed.ctx, m.IconURL, 32, "application-x-addon-symbolic"))
+		}
 		row.SetActivatable(true)
 		row.ConnectActivated(func() { a.showModDetails(m) })
 	}
 
-	src := gtk.NewLabel(m.PrimarySource().Label())
+	src := gtk.NewLabel(m.SourceLabel())
 	src.AddCSSClass("mpm-source")
 	row.AddSuffix(src)
 
@@ -678,6 +728,14 @@ func (a *App) showModDetails(m *model.Mod) {
 		facts.Add(r)
 	}
 	fact("File", m.File.Path)
+	if m.File.Stored() {
+		fact("Stored in this pack", core.FormatSize(int64(len(m.File.Data))))
+	}
+	if m.Local != nil && m.PrimarySource() == model.SourceLocal {
+		fact("Version", m.Local.Version)
+		fact("Mod ID", m.Local.ModID)
+		fact("Made for", core.LoaderLabels(m.Local.Loaders))
+	}
 	if m.Modrinth != nil {
 		fact("Modrinth version", m.Modrinth.VersionNumber)
 	}
@@ -703,6 +761,16 @@ func (a *App) showModDetails(m *model.Mod) {
 
 	if h := core.HitFromMod(m); h != nil {
 		box.Append(a.detailsWidget(ctx, h, m, nil, true, nil))
+	} else if m.Summary != "" {
+		// A jar from disk has no project page; show what its metadata says.
+		desc := gtk.NewLabel(m.Summary)
+		desc.SetWrap(true)
+		desc.SetXAlign(0)
+		desc.SetSelectable(true)
+		desc.SetMarginStart(18)
+		desc.SetMarginEnd(18)
+		desc.SetMarginBottom(18)
+		box.Append(desc)
 	}
 	sc := gtk.NewScrolledWindow()
 	sc.SetChild(box)
@@ -852,7 +920,10 @@ func (a *App) showExport(t core.Target) {
 			}
 		}
 		txt := fmt.Sprintf("<b>%d mods</b> and %d override files will be exported.", len(ms), len(os))
-		if opt.Format == core.FormatZip {
+		if n := core.CountStored(ms); n > 0 {
+			txt += fmt.Sprintf(" %d JAR file%s stored in this pack will be bundled.", n, plural(n))
+		}
+		if opt.Format == core.FormatZip && core.CountStored(ms) < len(ms) {
 			txt += " Jars are downloaded and checked against their hashes."
 		}
 		if unknown > 0 {
@@ -1051,4 +1122,105 @@ func (a *App) showAbout() {
 	ab.SetVersion(version.String())
 	ab.SetComments("Edit Minecraft modpacks from Modrinth and CurseForge.")
 	ab.Present(a.win)
+}
+
+// ---------------------------------------------------------------------------
+// Adding jar files
+
+func (a *App) chooseJars() {
+	if a.doc == nil {
+		return
+	}
+	d := gtk.NewFileDialog()
+	d.SetTitle("Add JAR Files")
+	d.SetAcceptLabel("Add")
+	f := gtk.NewFileFilter()
+	f.SetName("Mod files (.jar)")
+	f.AddSuffix("jar")
+	filters := gio.NewListStore(gtk.GTypeFileFilter)
+	filters.Append(f.Object)
+	d.SetFilters(filters)
+	if a.cfg.LastDir != "" {
+		d.SetInitialFolder(gio.NewFileForPath(a.cfg.LastDir))
+	}
+	d.OpenMultiple(context.Background(), &a.win.Window, func(res gio.AsyncResulter) {
+		files, err := d.OpenMultipleFinish(res)
+		if err != nil || files == nil {
+			return // cancelled
+		}
+		var paths []string
+		for i := uint(0); i < files.NItems(); i++ {
+			if obj := files.Item(i); obj != nil {
+				if p := (&gio.File{Object: obj}).Path(); p != "" {
+					paths = append(paths, p)
+				}
+			}
+		}
+		if len(paths) > 0 {
+			a.cfg.LastDir = filepath.Dir(paths[0])
+			_ = a.cfg.Save()
+		}
+		a.addJarPaths(paths)
+	})
+}
+
+// addJarPaths reads and looks up the jars off the main thread, then adds them.
+func (a *App) addJarPaths(paths []string) {
+	doc := a.doc
+	if doc == nil || len(paths) == 0 {
+		return
+	}
+	a.ed.busy.SetVisible(true)
+	a.ed.busy.Start()
+	ctx := a.ed.ctx
+	go func() {
+		prep := a.svc.PrepareJars(ctx, core.ReadJarFiles(paths), core.JarOptions{})
+		ui(func() {
+			if a.doc != doc {
+				return // the pack was closed meanwhile
+			}
+			a.ed.busy.Stop()
+			a.ed.busy.SetVisible(false)
+			results := prep.Apply(doc.Pack)
+			if core.JarsChanged(results) {
+				a.markDirty()
+				a.refreshList()
+			}
+			title, problems := core.JarSummary(results, prep.Report)
+			if len(problems) == 0 {
+				a.toast("%s", markup.Escape(markup.Pango, title))
+				return
+			}
+			a.error(title, "• "+strings.Join(problems, "\n• "))
+		})
+	}()
+}
+
+// jarIconWidget shows the icon inside a stored jar, if it has a usable one.
+func (a *App) jarIconWidget(m *model.Mod, size int) *gtk.Image {
+	img := gtk.NewImageFromIconName("application-x-addon-symbolic")
+	img.SetPixelSize(size)
+	img.AddCSSClass("mpm-icon")
+	key := strings.ToLower(m.File.SHA1)
+	if tex, ok := a.jarIcons[key]; ok {
+		if tex != nil {
+			img.SetFromPaintable(tex)
+		}
+		return img
+	}
+	data := m.File.Data
+	go func() {
+		png := core.JarIcon(data, size*2)
+		ui(func() {
+			var tex *gdk.Texture
+			if png != nil {
+				tex, _ = gdk.NewTextureFromBytes(glibv2.NewBytesWithGo(png))
+			}
+			a.jarIcons[key] = tex // nil: no icon, don't look again
+			if tex != nil {
+				img.SetFromPaintable(tex)
+			}
+		})
+	}()
+	return img
 }

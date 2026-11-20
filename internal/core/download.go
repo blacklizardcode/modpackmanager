@@ -27,15 +27,22 @@ func NewDownloader() *Downloader {
 	return &Downloader{HTTP: httpx.DefaultClient, CacheDir: filepath.Join(config.CacheDir(), "files")}
 }
 
-// Fetch returns the bytes of a mod's file, trying each URL in turn.
+// Fetch returns the bytes of a mod's file: the copy the pack stores, or a
+// download (cached on disk), trying each URL in turn.
 func (d *Downloader) Fetch(ctx context.Context, f model.File) ([]byte, error) {
+	if f.Stored() {
+		if err := verify(f.Data, f); err != nil {
+			return nil, fmt.Errorf("the copy of %s stored in the pack is damaged: %w", f.Name(), err)
+		}
+		return f.Data, nil
+	}
 	if f.SHA1 != "" {
 		if data, err := os.ReadFile(d.cachePath(f.SHA1)); err == nil && verify(data, f) == nil {
 			return data, nil
 		}
 	}
 	if len(f.URLs) == 0 {
-		return nil, fmt.Errorf("%s has no download URL", f.Name())
+		return nil, fmt.Errorf("%s has no download link and isn't stored in the pack", f.Name())
 	}
 	var lastErr error
 	for _, u := range f.URLs {

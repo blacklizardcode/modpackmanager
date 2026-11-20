@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"modpackmanager/internal/model"
 )
@@ -15,8 +16,11 @@ import (
 // MPMExtension is the file extension of the app's own format.
 const MPMExtension = ".mpm"
 
-// MPMFormatVersion is bumped on incompatible changes.
-const MPMFormatVersion = 1
+// MPMFormatVersion is the newest format version this build reads. A pack is
+// written with the oldest version that can hold it: 1, or 2 when it stores
+// jar files (files/), so that older builds refuse such a pack instead of
+// dropping the jars when they save it.
+const MPMFormatVersion = 2
 
 const mpmIndexName = "modpackmanager.json"
 
@@ -25,6 +29,7 @@ const mpmIndexName = "modpackmanager.json"
 // An .mpm file is a zip containing:
 //
 //	modpackmanager.json   pack metadata, groups and mod entries (this struct)
+//	files/<sha1>/<name>   jars the pack stores itself (format version 2)
 //	overrides/...         files copied to client and server
 //	client-overrides/...  files copied to the client only
 //	server-overrides/...  files copied to the server only
@@ -64,6 +69,15 @@ func ReadMPM(zr *zip.Reader) (*model.Pack, error) {
 			}
 		}
 	}
+	stored, err := readStoredFiles(zr)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range p.Mods {
+		if data, ok := stored[strings.ToLower(m.File.SHA1)]; ok && m.File.SHA1 != "" {
+			m.File.Data = data
+		}
+	}
 	ov, err := readOverrides(zr, map[string]model.Side{
 		"overrides/":        model.SideBoth,
 		"client-overrides/": model.SideClient,
@@ -73,6 +87,7 @@ func ReadMPM(zr *zip.Reader) (*model.Pack, error) {
 		return nil, err
 	}
 	p.Overrides = ov
+	promoteJars(p)
 	return p, nil
 }
 
@@ -85,12 +100,31 @@ func WriteMPM(w io.Writer, p *model.Pack) error {
 	if p.Mods == nil {
 		p.Mods = []*model.Mod{}
 	}
-	data, err := json.MarshalIndent(mpmDoc{Format: "modpackmanager", FormatVersion: MPMFormatVersion, Pack: p}, "", "  ")
+	version := 1
+	for _, m := range p.Mods {
+		if m.File.Stored() {
+			if err := checkStored(m); err != nil {
+				return err
+			}
+			version = 2
+		}
+	}
+	data, err := json.MarshalIndent(mpmDoc{Format: "modpackmanager", FormatVersion: version, Pack: p}, "", "  ")
 	if err != nil {
 		return err
 	}
 	if err := writeZipFile(zw, mpmIndexName, data); err != nil {
 		return err
+	}
+	written := map[string]bool{}
+	for _, m := range p.Mods {
+		if !m.File.Stored() || written[strings.ToLower(m.File.SHA1)] {
+			continue
+		}
+		written[strings.ToLower(m.File.SHA1)] = true
+		if err := writeZipFile(zw, storedFileName(m), m.File.Data); err != nil {
+			return err
+		}
 	}
 	for _, o := range p.Overrides {
 		if err := writeZipFile(zw, overridePrefix(o.Side)+o.Path, o.Data); err != nil {

@@ -135,16 +135,23 @@ func (a *App) refresh() {
 		gi.SetFirstColumnSpanned(true)
 		a.tree.AddTopLevelItem(gi)
 		for _, m := range sec.Mods {
-			mi := qt.NewQTreeWidgetItem2([]string{m.DisplayName(), sideText(m.Side), m.PrimarySource().Label(), markup.MarkdownToPlain(m.Summary)})
+			mi := qt.NewQTreeWidgetItem2([]string{m.DisplayName(), sideText(m.Side), m.SourceLabel(), markup.MarkdownToPlain(m.Summary)})
 			mi.SetData(0, roleModID, qt.NewQVariant14(m.ID))
 			mi.SetForeground(colSide, sideColor(m.Side))
 			tip := m.File.Name()
+			if m.File.Stored() {
+				tip += "\nStored in this pack"
+			}
 			if m.SideLocked {
 				tip += "\nSide set by you"
 			}
 			mi.SetToolTip(colName, tip)
 			mi.SetToolTip(colSummary, markup.MarkdownToPlain(m.Summary))
-			a.setIcon(gen, mi, m.IconURL)
+			if m.IconURL == "" && m.File.Stored() {
+				a.setJarIcon(gen, mi, m)
+			} else {
+				a.setIcon(gen, mi, m.IconURL)
+			}
 			gi.AddChild(mi)
 		}
 		gi.SetExpanded(sec.Group == nil || !sec.Group.Collapsed || !f.Empty())
@@ -177,6 +184,30 @@ func (a *App) setIcon(gen int, it *qt.QTreeWidgetItem, url string) {
 				ic = qt.NewQIcon2(pm)
 				a.icons[url] = ic
 			}
+			if gen == a.gen {
+				it.SetIcon(0, ic)
+			}
+		})
+	}()
+}
+
+// setJarIcon shows the icon inside a stored jar, like setIcon does for URLs.
+func (a *App) setJarIcon(gen int, it *qt.QTreeWidgetItem, m *model.Mod) {
+	key := "jar:" + strings.ToLower(m.File.SHA1)
+	if ic, ok := a.icons[key]; ok {
+		it.SetIcon(0, ic)
+		return
+	}
+	it.SetIcon(0, themeIcon("application-x-addon", "package-x-generic"))
+	data := m.File.Data
+	go func() {
+		png := core.JarIcon(data, 48)
+		ui(func() {
+			ic := themeIcon("application-x-addon", "package-x-generic") // remembered when there's no icon
+			if pm := qt.NewQPixmap(); png != nil && pm.LoadFromDataWithData(png) {
+				ic = qt.NewQIcon2(pm)
+			}
+			a.icons[key] = ic
 			if gen == a.gen {
 				it.SetIcon(0, ic)
 			}
@@ -239,6 +270,7 @@ func (a *App) contextMenu(pos *qt.QPoint) {
 	mods := a.selectedMods()
 	if len(mods) == 0 {
 		menu.AddAction2(themeIcon("list-add"), "Add Mods…").OnTriggered(a.showSearch)
+		menu.AddAction2(themeIcon("document-import", "archive-insert", "document-open"), "Add JAR Files…").OnTriggered(a.chooseJars)
 		menu.AddAction2(themeIcon("folder-new"), "New Group…").OnTriggered(a.newGroup)
 		menu.Popup(global)
 		return

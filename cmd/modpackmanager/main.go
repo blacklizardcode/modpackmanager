@@ -5,6 +5,7 @@
 //	modpackmanager info <pack>             print pack contents
 //	modpackmanager export <pack> <client|common|server|full> <mrpack|curseforge|zip> [out] [--with-common] [--embed]
 //	modpackmanager convert <pack> <out.mpm>
+//	modpackmanager add <pack.mpm> <file.jar|folder>... [--side client|server|both] [--offline]
 //	modpackmanager version
 //
 // Set MPM_UI=gtk or MPM_UI=qt to force a toolkit.
@@ -21,6 +22,7 @@ import (
 
 	"modpackmanager/internal/config"
 	"modpackmanager/internal/core"
+	"modpackmanager/internal/formats"
 	"modpackmanager/internal/model"
 	"modpackmanager/internal/version"
 )
@@ -38,6 +40,9 @@ func main() {
 		case "convert":
 			exit(cmdConvert(args[1:]))
 			return
+		case "add":
+			exit(cmdAdd(args[1:]))
+			return
 		case "version", "-v", "--version":
 			fmt.Println("modpackmanager", version.String())
 			return
@@ -54,6 +59,7 @@ const usage = `usage:
   modpackmanager info <pack>
   modpackmanager export <pack> <client|common|server|full> <mrpack|curseforge|zip> [out] [--with-common] [--embed]
   modpackmanager convert <pack> <out.mpm>
+  modpackmanager add <pack.mpm> <file.jar|folder>... [--side client|server|both] [--offline]
   modpackmanager version`
 
 func exit(err error) {
@@ -136,7 +142,7 @@ func cmdInfo(args []string) error {
 		}
 		fmt.Printf("[%s]\n", name)
 		for _, m := range sec.Mods {
-			fmt.Printf("  %-40s %-16s %s\n", m.DisplayName(), m.Side.Label(), m.PrimarySource().Label())
+			fmt.Printf("  %-40s %-16s %s\n", m.DisplayName(), m.Side.Label(), m.SourceLabel())
 		}
 	}
 	return nil
@@ -216,4 +222,80 @@ func cmdConvert(args []string) error {
 		}
 	}
 	return doc.Save(args[1])
+}
+
+// cmdAdd adds jar files (or the jars in a folder) to an .mpm pack and saves it.
+func cmdAdd(args []string) error {
+	var pos []string
+	opt := core.JarOptions{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--offline":
+			opt.Offline = true
+		case a == "--side" || strings.HasPrefix(a, "--side="):
+			v, ok := strings.CutPrefix(a, "--side=")
+			if !ok {
+				if i+1 >= len(args) {
+					return fmt.Errorf("--side needs a value: client, server or both")
+				}
+				i++
+				v = args[i]
+			}
+			if opt.Side = model.ParseSide(v); opt.Side == model.SideUnknown {
+				return fmt.Errorf("unknown side %q (use client, server or both)", v)
+			}
+		case strings.HasPrefix(a, "--"):
+			return fmt.Errorf("unknown option %s", a)
+		default:
+			pos = append(pos, a)
+		}
+	}
+	if len(pos) < 2 {
+		return fmt.Errorf(usage)
+	}
+	doc, err := core.Open(pos[0])
+	if err != nil {
+		return err
+	}
+	if doc.Kind != formats.KindMPM {
+		return fmt.Errorf("%s isn't an .mpm file; convert it first: modpackmanager convert %s pack.mpm", pos[0], pos[0])
+	}
+	svc := core.New(config.Load().APIKey())
+	results, rep := svc.AddJars(context.Background(), doc.Pack, core.ReadJarFiles(pos[1:]), opt)
+	failed := 0
+	for _, r := range results {
+		switch {
+		case r.Err != nil:
+			failed++
+			fmt.Fprintf(os.Stderr, "error: %s %s\n", r.Name, r.Err)
+		case r.Existing:
+			fmt.Printf("unchanged  %s (already in the pack as %s)\n", r.Name, r.Mod.DisplayName())
+		default:
+			how := "stored"
+			if r.Linked {
+				how = "linked to Modrinth"
+			}
+			fmt.Printf("added      %s as %s (%s, %s)\n", r.Name, r.Mod.DisplayName(), r.Mod.Side.Label(), how)
+			if r.Replaced != nil {
+				fmt.Printf("           replaces %s\n", r.Replaced.File.Name())
+			}
+			for _, w := range r.Warnings {
+				fmt.Fprintf(os.Stderr, "warning: %s: %s\n", r.Name, w)
+			}
+		}
+	}
+	for _, w := range rep.Warnings {
+		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
+	if core.JarsChanged(results) {
+		if err := doc.Save(""); err != nil {
+			return err
+		}
+		fmt.Printf("saved %s\n", doc.Path)
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d files were not added", failed, len(results))
+	}
+	return nil
 }

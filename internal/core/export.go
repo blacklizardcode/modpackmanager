@@ -136,6 +136,18 @@ func SelectOverrides(p *model.Pack, t Target, includeCommon bool) []*model.Overr
 	return out
 }
 
+// CountStored returns how many of the mods are jars the pack stores itself;
+// exports bundle those.
+func CountStored(mods []*model.Mod) int {
+	n := 0
+	for _, m := range mods {
+		if m.File.Stored() {
+			n++
+		}
+	}
+	return n
+}
+
 // ExportResult summarises an export.
 type ExportResult struct {
 	Mods     int
@@ -258,7 +270,9 @@ func (s *Service) Export(ctx context.Context, p *model.Pack, opt ExportOptions, 
 						hasMR = true
 					}
 				}
-				if opt.EmbedNonModrinth && !hasMR {
+				// A file without a link (a jar the pack stores) can only
+				// travel inside the overrides.
+				if len(f.URLs) == 0 || (opt.EmbedNonModrinth && !hasMR) {
 					embedded[m.ID] = b
 				} else {
 					cp := *m

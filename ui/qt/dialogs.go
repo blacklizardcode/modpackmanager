@@ -73,7 +73,10 @@ func (a *App) showExport(t core.Target) {
 			}
 		}
 		txt := fmt.Sprintf("<b>%d mods</b> and %d override files will be exported.", len(ms), len(ovs))
-		if opt.Format == core.FormatZip {
+		if n := core.CountStored(ms); n > 0 {
+			txt += fmt.Sprintf(" %d JAR file%s stored in this pack will be bundled.", n, plural(n))
+		}
+		if opt.Format == core.FormatZip && core.CountStored(ms) < len(ms) {
 			txt += " Jars are downloaded and checked against their hashes."
 		}
 		if unknown > 0 {
@@ -261,6 +264,19 @@ func (a *App) showModDetails(m *model.Mod) {
 	fileL := qt.NewQLabel3(m.File.Path)
 	fileL.SetTextInteractionFlags(qt.TextSelectableByMouse)
 	form.AddRow3("File:", fileL.QWidget)
+	if m.File.Stored() {
+		form.AddRow3("Stored in this pack:", qt.NewQLabel3(core.FormatSize(int64(len(m.File.Data)))).QWidget)
+	}
+	if l := m.Local; l != nil && m.PrimarySource() == model.SourceLocal {
+		for _, row := range [][2]string{{"Version:", l.Version}, {"Mod ID:", l.ModID}, {"Made for:", core.LoaderLabels(l.Loaders)}} {
+			if row[1] != "" {
+				lbl := qt.NewQLabel3(row[1])
+				lbl.SetTextFormat(qt.PlainText)
+				lbl.SetTextInteractionFlags(qt.TextSelectableByMouse)
+				form.AddRow3(row[0], lbl.QWidget)
+			}
+		}
+	}
 	if m.Modrinth != nil && m.Modrinth.VersionNumber != "" {
 		form.AddRow3("Modrinth version:", qt.NewQLabel3(m.Modrinth.VersionNumber).QWidget)
 	}
@@ -287,6 +303,8 @@ func (a *App) showModDetails(m *model.Mod) {
 	gen := 0
 	if h := core.HitFromMod(m); h != nil {
 		a.renderDetails(browser, h, &gen)
+	} else if m.Summary != "" {
+		browser.SetPlainText(m.Summary) // a jar's own description
 	} else {
 		browser.SetHtml("<p>This file isn't linked to Modrinth or CurseForge.</p>")
 	}

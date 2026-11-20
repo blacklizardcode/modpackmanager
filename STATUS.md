@@ -1,24 +1,17 @@
 # Status
 
 ## Tested
-- Core (formats, Modrinth/CurseForge APIs, search, add-with-dependencies, exports): `sh build.sh test`, against local mocks.
-- Launcher + command line (`cmd/modpackmanager`): picks Qt on KDE/LXQt, GTK elsewhere on Linux, Qt on Windows/macOS.
-- GTK4/libadwaita app and Qt 6 app: built and checked on screen on Linux (Ubuntu 24.04).
-- Linux tarballs (`packaging/linux-tarball.sh`, `packaging/smoke-linux.sh`): built, installed into a scratch prefix and started headless (GTK under Xvfb, Qt offscreen) on Ubuntu 24.04. The Qt tarball was built without `-trimpath` (that compile needs about 6 GB of RAM and didn't fit next to other work); the flag is verified for the launcher and GTK only.
-- `flake.nix` / `nix/package.nix`: evaluate cleanly for x86_64 and aarch64 (`nix flake check --no-build`); the Go tests pass in a sandbox-like environment (no network, no home, `-trimpath`).
-- `.github/workflows/ci.yml`: action pins match their tags, inputs match each action's manifest, every `run:` block passes shellcheck.
+- Core (formats, Modrinth/CurseForge APIs, search, add-with-dependencies, adding jar files, exports): `sh build.sh test`, against local mocks. The jar-metadata and TOML readers are also fuzz-tested.
+- Launcher and command line (`cmd/modpackmanager`), including `modpackmanager add`.
+- GTK4/libadwaita app and Qt 6 app: built and driven on X11 (Xvfb, Ubuntu 24.04). Add JAR Files was checked end to end in both: the menu and toolbar entries, Ctrl+Shift+J, picking several files, drag and drop from another app, warnings for wrong-loader jars and non-jar files, the details dialog, saving, and a server export.
+- CI (GitHub Actions) for 6840f10: tests, both Linux tarballs (built and smoke-tested headless) and `nix flake check` (builds and tests the GTK and Qt Nix packages) passed.
 
-## Never run for real
-- Live Modrinth/CurseForge APIs (the build machine couldn't reach them).
-- **An actual `nix build`** (the machine that wrote the flake couldn't reach the Nix cache), so `nix/vendor-hash.txt` doesn't exist yet.
-- **The GitHub workflow** (no way to run Actions from there), including the draft-release step.
-- **Windows** (`packaging/windows-zip.sh`, the `windows` job) and **macOS** (not included at all).
+## Not tried
+- Live Modrinth/CurseForge APIs from the machine that writes the code (it can't reach them), so those calls are only tested against mocks.
+- Wayland sessions (drag and drop there goes through GTK's and Qt's own code).
+- Windows (the experimental CI job) and macOS (not built at all).
 
-## Before the first release
-0. Two 10 MB binaries are tracked in git (`modpackmanager` and `cmd/modpackmanager/modpackmanager`). Untrack them (the `.gitignore` here already ignores them): `git rm --cached modpackmanager cmd/modpackmanager/modpackmanager`.
-1. `go mod tidy` and commit `go.mod` + a complete `go.sum` (the one in the repo only has two modules in it; the workflow's tidy check fails until this is done).
-2. `git add` the new files, run `bash nix/update-vendor-hash.sh`, `nix flake lock`, then `nix build .#gtk .#qt` and try both apps.
-3. Commit `nix/vendor-hash.txt` and `flake.lock`, push, and look at the first CI run (Actions → CI → Run workflow is a dry run of the whole pipeline).
-4. Release: edit `internal/version/VERSION`, tag `v<VERSION>`, push the tag, review the draft release, publish.
+## Releasing
+See "Releases and CI" in the README: bump `internal/version/VERSION`, push a matching `v<VERSION>` tag, then publish the draft release the workflow creates.
 
 You can delete the old `_wip/` folder (an early snapshot, ignored by `go build`).

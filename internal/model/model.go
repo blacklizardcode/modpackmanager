@@ -147,6 +147,14 @@ type CurseForgeRef struct {
 	Required  bool `json:"required"`
 }
 
+// LocalRef is what a jar's own metadata (fabric.mod.json, mods.toml, …) says
+// about it. It is recorded for jars added from disk.
+type LocalRef struct {
+	ModID   string   `json:"modId,omitempty"`   // the loader's mod id, e.g. "sodium"
+	Version string   `json:"version,omitempty"` // the jar's version string
+	Loaders []string `json:"loaders,omitempty"` // fabric, quilt, forge, neoforge
+}
+
 // File describes the jar (or zip) a mod entry installs.
 type File struct {
 	Path     string   `json:"path"` // relative to the instance root, e.g. mods/sodium.jar
@@ -156,10 +164,18 @@ type File struct {
 	MD5      string   `json:"md5,omitempty"`
 	URLs     []string `json:"urls,omitempty"`
 	Filename string   `json:"-"`
+	// Data is the file itself when the pack stores it: a jar added from disk,
+	// or one found in an imported pack's overrides. Such files have no
+	// download URL; exports bundle them. The .mpm format keeps them under
+	// files/ rather than in the JSON.
+	Data []byte `json:"-"`
 }
 
 // Name returns the file's base name.
 func (f File) Name() string { return path.Base(f.Path) }
+
+// Stored reports whether the pack carries the file itself.
+func (f File) Stored() bool { return len(f.Data) > 0 }
 
 // Mod is one entry in the pack.
 type Mod struct {
@@ -179,6 +195,7 @@ type Mod struct {
 	File        File           `json:"file"`
 	Modrinth    *ModrinthRef   `json:"modrinth,omitempty"`
 	CurseForge  *CurseForgeRef `json:"curseforge,omitempty"`
+	Local       *LocalRef      `json:"local,omitempty"`
 }
 
 // PrimarySource is the platform the mod is best identified on.
@@ -192,6 +209,18 @@ func (m *Mod) PrimarySource() Source {
 	return SourceLocal
 }
 
+// SourceLabel says where the mod comes from, for display: the platform, or
+// "Local file" for a jar the pack stores itself.
+func (m *Mod) SourceLabel() string {
+	if s := m.PrimarySource(); s != SourceLocal {
+		return s.Label()
+	}
+	if m.File.Stored() || len(m.File.URLs) == 0 {
+		return "Local file"
+	}
+	return SourceLocal.Label()
+}
+
 // DisplayName never returns an empty string.
 func (m *Mod) DisplayName() string {
 	if strings.TrimSpace(m.Name) != "" {
@@ -199,7 +228,12 @@ func (m *Mod) DisplayName() string {
 	}
 	if m.File.Path != "" {
 		n := m.File.Name()
-		return strings.TrimSuffix(strings.TrimSuffix(n, ".jar"), ".zip")
+		for _, ext := range []string{".jar", ".zip"} {
+			if len(n) > len(ext) && strings.EqualFold(n[len(n)-len(ext):], ext) {
+				return n[:len(n)-len(ext)]
+			}
+		}
+		return n
 	}
 	if m.Slug != "" {
 		return m.Slug

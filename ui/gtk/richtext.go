@@ -212,6 +212,7 @@ const appCSS = `
 .mpm-side.both   { background: alpha(@success_bg_color, 0.18); color: @success_color; }
 .mpm-side.unknown{ background: alpha(currentColor, 0.10); }
 .mpm-source { font-size: smaller; opacity: 0.7; }
+.mpm-dropzone:drop(active) { box-shadow: inset 0 0 0 3px alpha(@accent_bg_color, 0.7); background-color: alpha(@accent_bg_color, 0.06); }
 `
 
 func loadCSS() {
