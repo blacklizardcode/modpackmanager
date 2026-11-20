@@ -51,6 +51,19 @@ buildGoModule (finalAttrs: {
     else
       lib.fakeHash;
 
+  # The goModules (vendoring) derivation inherits nativeBuildInputs but not
+  # buildInputs, so wrapQtAppsHook would run there without qtbase and abort
+  # ("qtPluginPrefix is unset"). Vendoring needs neither wrapper hook.
+  overrideModAttrs = old: {
+    nativeBuildInputs = lib.filter (
+      p:
+      !(lib.elem p [
+        qt6.wrapQtAppsHook
+        wrapGAppsHook4
+      ])
+    ) (old.nativeBuildInputs or [ ]);
+  };
+
   # Say what is wrong instead of letting Go fail cryptically. This is a build
   # step rather than an evaluation error so that `nix develop` still works,
   # which is where you would run `go mod tidy`.
