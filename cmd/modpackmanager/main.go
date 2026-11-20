@@ -5,6 +5,7 @@
 //	modpackmanager info <pack>             print pack contents
 //	modpackmanager export <pack> <client|common|server|full> <mrpack|curseforge|zip> [out] [--with-common] [--embed]
 //	modpackmanager convert <pack> <out.mpm>
+//	modpackmanager version
 //
 // Set MPM_UI=gtk or MPM_UI=qt to force a toolkit.
 package main
@@ -21,6 +22,7 @@ import (
 	"modpackmanager/internal/config"
 	"modpackmanager/internal/core"
 	"modpackmanager/internal/model"
+	"modpackmanager/internal/version"
 )
 
 func main() {
@@ -36,6 +38,9 @@ func main() {
 		case "convert":
 			exit(cmdConvert(args[1:]))
 			return
+		case "version", "-v", "--version":
+			fmt.Println("modpackmanager", version.String())
+			return
 		case "-h", "--help", "help":
 			fmt.Println(usage)
 			return
@@ -48,7 +53,8 @@ const usage = `usage:
   modpackmanager [file]
   modpackmanager info <pack>
   modpackmanager export <pack> <client|common|server|full> <mrpack|curseforge|zip> [out] [--with-common] [--embed]
-  modpackmanager convert <pack> <out.mpm>`
+  modpackmanager convert <pack> <out.mpm>
+  modpackmanager version`
 
 func exit(err error) {
 	if err != nil {

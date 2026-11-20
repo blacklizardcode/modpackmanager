@@ -1,0 +1,12 @@
+# Keeps the SHA-pinned actions in .github/workflows up to date.
+# (Go modules are deliberately left out: go.sum changes would also need a new
+# nix/vendor-hash.txt, so bump those by hand with `go get -u` + nix/update-vendor-hash.sh.)
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

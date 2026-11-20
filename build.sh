@@ -1,16 +1,18 @@
 #!/bin/sh
 # Modpack Manager build helper.
-#   ./build.sh            launcher + GTK app (GNOME and most Linux desktops)
-#   ./build.sh qt         Qt app (KDE Plasma, Windows, macOS)
-#   ./build.sh all        launcher + both apps
-#   ./build.sh test       run the tests
-#   ./build.sh install    install bin/* to ~/.local (PREFIX=/usr/local for system-wide)
+#   sh build.sh           launcher + GTK app (GNOME and most Linux desktops)
+#   sh build.sh qt        Qt app (KDE Plasma, Windows, macOS)
+#   sh build.sh all       launcher + both apps
+#   sh build.sh test      run the tests
+#   sh build.sh install   install bin/* to ~/.local (PREFIX=/usr/local for system-wide)
+# LDFLAGS="-s -w" sh build.sh ...  strip the binaries (release builds do this)
 set -eu
 cd "$(dirname "$0")"
 PREFIX=${PREFIX:-$HOME/.local}
-cli() { go build -o bin/modpackmanager ./cmd/modpackmanager; }
-gtk() { go build -o bin/modpackmanager-gtk ./cmd/modpackmanager-gtk; }
-qt()  { go build -o bin/modpackmanager-qt ./cmd/modpackmanager-qt; }
+gobuild() { go build ${LDFLAGS:+-ldflags "$LDFLAGS"} -o "bin/$1" "./cmd/$1"; }
+cli() { gobuild modpackmanager; }
+gtk() { gobuild modpackmanager-gtk; }
+qt()  { gobuild modpackmanager-qt; }
 case "${1:-default}" in
   default) cli; gtk ;;
   gtk) gtk ;;

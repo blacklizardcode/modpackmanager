@@ -49,7 +49,7 @@ func BlocksToHTML(blocks []Block) string {
 			for _, im := range bl.Images {
 				attrs := `src="` + escape(QtRich, im.Src) + `" alt="` + escape(QtRich, im.Alt) + `"`
 				if w := im.Width; w > 0 {
-					attrs += fmt.Sprintf(` width="%d"`, min(w, 640))
+					attrs += fmt.Sprintf(` width="%d"`, min(w, 560))
 				}
 				img := "<img " + attrs + "/>"
 				if im.Link != "" {

@@ -432,7 +432,7 @@ func (a *App) loadDocImages(b *qt.QTextBrowser, html string, urls []string, gen 
 	for _, u := range urls {
 		u := u
 		go func() {
-			data, _, err := a.images.Load(context.Background(), u, 900)
+			data, _, err := a.images.Load(context.Background(), u, 560)
 			ui(func() {
 				if *gen != my {
 					return

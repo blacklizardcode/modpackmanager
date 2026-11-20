@@ -1,0 +1,261 @@
+name: CI
+
+# Pull requests and pushes to main: test and build everything.
+# Tag v<VERSION> (the version in internal/version/VERSION): the same, then a DRAFT
+# GitHub release with the artifacts attached; you publish it by hand.
+# Manual run (Actions tab > CI > Run workflow): the same, but the release step is
+# skipped, so it is a safe dry run of the whole pipeline.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Never cancel a tag build half-way through a release.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  test:
+    name: test (Go ${{ matrix.go }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # oldest = the Go version in go.mod, stable = the newest release.
+        go: [oldest, stable]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          # An empty go-version falls back to go-version-file.
+          go-version: ${{ matrix.go == 'stable' && 'stable' || '' }}
+          go-version-file: go.mod
+          check-latest: ${{ matrix.go == 'stable' }}
+      - name: go.mod and go.sum are tidy
+        if: matrix.go == 'stable'
+        run: go mod tidy -diff
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: vet
+        run: go vet ./internal/... ./cmd/modpackmanager/
+      - name: test
+        run: go test -count=1 ./internal/... ./cmd/modpackmanager/
+
+  linux:
+    name: linux (${{ matrix.ui }})
+    needs: test
+    runs-on: ubuntu-24.04 # oldest supported glibc/GTK/Qt: binaries run on anything newer
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        ui: [gtk, qt]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          check-latest: true
+          cache: false # the cache step below keeps one cache per frontend
+      - name: Go build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ matrix.ui }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-${{ runner.os }}-${{ matrix.ui }}-
+      - name: Install build dependencies
+        env:
+          UI: ${{ matrix.ui }}
+        run: |
+          case "$UI" in
+            gtk) pkgs="libgtk-4-dev libadwaita-1-dev libgirepository1.0-dev xvfb desktop-file-utils" ;;
+            qt) pkgs="qt6-base-dev desktop-file-utils" ;;
+          esac
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config $pkgs
+      - name: Build tarball
+        env:
+          UI: ${{ matrix.ui }}
+        run: sh packaging/linux-tarball.sh "$UI" dist
+      - name: Smoke test
+        run: sh packaging/smoke-linux.sh dist/*.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-linux-${{ matrix.ui }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  # EXPERIMENTAL: this job has never run. continue-on-error keeps a failure here
+  # from blocking the release; the release job warns when the zip is missing.
+  windows:
+    name: windows (experimental)
+    needs: test
+    runs-on: windows-2025
+    continue-on-error: true
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            zip
+            mingw-w64-ucrt-x86_64-go
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-svg
+      - name: Build zip
+        run: sh packaging/windows-zip.sh dist
+      - name: Smoke test (a plain Windows PATH, so no MSYS2 DLL can be picked up by accident)
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist -Filter *.zip | Select-Object -First 1
+          $dest = Join-Path $env:RUNNER_TEMP 'mpm-smoke'
+          Expand-Archive -Path $zip.FullName -DestinationPath $dest
+          $app = Get-ChildItem $dest -Recurse -Filter modpackmanager-qt.exe | Select-Object -First 1
+          $cli = Join-Path $app.DirectoryName 'modpackmanager.exe'
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          & $cli version
+          if ($LASTEXITCODE -ne 0) { throw "modpackmanager.exe version failed" }
+          $p = Start-Process -FilePath $app.FullName -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { throw "modpackmanager-qt.exe exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-windows-qt
+          path: dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  nix:
+    name: nix flake check
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: flake.lock and nix/vendor-hash.txt are committed
+        run: |
+          if [ ! -s flake.lock ]; then
+            echo "::error::flake.lock is missing. Run 'nix flake lock' and commit it."
+            exit 1
+          fi
+          if [ ! -s nix/vendor-hash.txt ]; then
+            echo "::error::nix/vendor-hash.txt is missing. Run 'bash nix/update-vendor-hash.sh' and commit it."
+            exit 1
+          fi
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      # Builds and tests both variants (.#gtk and .#qt) and evaluates the rest.
+      - run: nix flake check --print-build-logs --no-update-lock-file
+
+  release:
+    name: release
+    # Manual runs do everything except the final step, as a dry run. The Windows
+    # job is experimental, so whatever happened to it (failed, timed out) must
+    # not block the release; everything else has to have passed.
+    if: >-
+      !cancelled()
+      && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v'))
+      && needs.test.result == 'success'
+      && needs.linux.result == 'success'
+      && needs.nix.result == 'success'
+    needs: [test, linux, windows, nix]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the release and upload its files
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tag matches internal/version/VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          want="v$(tr -d '[:space:]' < internal/version/VERSION)"
+          if [ "$TAG" != "$want" ]; then
+            echo "::error::Tag $TAG does not match internal/version/VERSION (expected $want)."
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Check the files and write checksums
+        run: |
+          version=$(tr -d '[:space:]' < internal/version/VERSION)
+          status=0
+          for f in "modpackmanager-$version-linux-x86_64-gtk.tar.gz" "modpackmanager-$version-linux-x86_64-qt.tar.gz"; do
+            if [ ! -f "dist/$f" ]; then
+              echo "::error::Missing $f"
+              status=1
+            fi
+          done
+          if [ ! -f "dist/modpackmanager-$version-windows-x86_64-qt.zip" ]; then
+            echo "::warning::The Windows zip is missing (the experimental Windows job failed). The release will not include it."
+          fi
+          [ "$status" -eq 0 ] || exit 1
+          (cd dist && sha256sum -- * | tee SHA256SUMS.tmp && mv SHA256SUMS.tmp SHA256SUMS)
+          ls -l dist
+      - name: Create the draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(tr -d '[:space:]' < internal/version/VERSION)
+          prerelease=
+          case "$version" in *-*) prerelease=--prerelease ;; esac
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # A re-run: replace the files of the existing (draft) release.
+            gh release upload "$TAG" dist/* --clobber
+          else
+            # shellcheck disable=SC2086
+            gh release create "$TAG" dist/* --draft --verify-tag $prerelease \
+              --title "Modpack Manager $version" --generate-notes
+          fi
+          echo "Draft release created. Review it under Releases, then publish it." >> "$GITHUB_STEP_SUMMARY"
+      - name: Dry run
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          {
+            echo "Dry run: no release was created. A v<VERSION> tag would attach:"
+            echo '```'
+            ls -1 dist
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -220,26 +220,26 @@ func (a *App) contextMenu(pos *qt.QPoint) {
 	if it != nil && a.modOf(it) == nil {
 		gid := it.Data(0, roleGroupID).ToString()
 		if g := a.doc.Pack.Group(gid); g != nil {
-			menu.AddAction3(themeIcon("edit-rename"), "Rename Group…").OnTriggered(func() { a.renameGroup(g) })
-			menu.AddAction3(themeIcon("go-up"), "Move Up").OnTriggered(func() { a.doc.Pack.MoveGroup(g.ID, -1); a.markDirty(); a.refresh() })
-			menu.AddAction3(themeIcon("go-down"), "Move Down").OnTriggered(func() { a.doc.Pack.MoveGroup(g.ID, 1); a.markDirty(); a.refresh() })
+			menu.AddAction2(themeIcon("edit-rename"), "Rename Group…").OnTriggered(func() { a.renameGroup(g) })
+			menu.AddAction2(themeIcon("go-up"), "Move Up").OnTriggered(func() { a.doc.Pack.MoveGroup(g.ID, -1); a.markDirty(); a.refresh() })
+			menu.AddAction2(themeIcon("go-down"), "Move Down").OnTriggered(func() { a.doc.Pack.MoveGroup(g.ID, 1); a.markDirty(); a.refresh() })
 			menu.AddSeparator()
-			menu.AddAction3(themeIcon("edit-delete"), "Delete Group (keep mods)").OnTriggered(func() {
+			menu.AddAction2(themeIcon("edit-delete"), "Delete Group (keep mods)").OnTriggered(func() {
 				a.doc.Pack.RemoveGroup(g.ID)
 				a.markDirty()
 				a.refresh()
 			})
 		}
 		menu.AddSeparator()
-		menu.AddAction3(themeIcon("folder-new"), "New Group…").OnTriggered(a.newGroup)
+		menu.AddAction2(themeIcon("folder-new"), "New Group…").OnTriggered(a.newGroup)
 		menu.Popup(global)
 		return
 	}
 
 	mods := a.selectedMods()
 	if len(mods) == 0 {
-		menu.AddAction3(themeIcon("list-add"), "Add Mods…").OnTriggered(a.showSearch)
-		menu.AddAction3(themeIcon("folder-new"), "New Group…").OnTriggered(a.newGroup)
+		menu.AddAction2(themeIcon("list-add"), "Add Mods…").OnTriggered(a.showSearch)
+		menu.AddAction2(themeIcon("folder-new"), "New Group…").OnTriggered(a.newGroup)
 		menu.Popup(global)
 		return
 	}
@@ -249,9 +249,9 @@ func (a *App) contextMenu(pos *qt.QPoint) {
 	}
 	if len(mods) == 1 {
 		m := mods[0]
-		menu.AddAction3(themeIcon("documentinfo", "help-about"), "Details…").OnTriggered(func() { a.showModDetails(m) })
+		menu.AddAction2(themeIcon("documentinfo", "help-about"), "Details…").OnTriggered(func() { a.showModDetails(m) })
 		if u := m.WebURL(); u != "" {
-			menu.AddAction3(themeIcon("internet-web-browser", "applications-internet"), "Open Project Page").OnTriggered(func() {
+			menu.AddAction2(themeIcon("internet-web-browser", "applications-internet"), "Open Project Page").OnTriggered(func() {
 				qt.QDesktopServices_OpenUrl(qt.NewQUrl3(u))
 			})
 		}
@@ -261,11 +261,11 @@ func (a *App) contextMenu(pos *qt.QPoint) {
 	gm := menu.AddMenu2(themeIcon("folder"), "Move "+label+" to Group")
 	for _, g := range a.doc.Pack.Groups {
 		g := g
-		gm.AddAction(g.Name).OnTriggered(func() { a.moveTo(mods, g.ID) })
+		gm.AddActionWithText(g.Name).OnTriggered(func() { a.moveTo(mods, g.ID) })
 	}
-	gm.AddAction("Ungrouped").OnTriggered(func() { a.moveTo(mods, "") })
+	gm.AddActionWithText("Ungrouped").OnTriggered(func() { a.moveTo(mods, "") })
 	gm.AddSeparator()
-	gm.AddAction3(themeIcon("folder-new"), "New Group…").OnTriggered(func() {
+	gm.AddAction2(themeIcon("folder-new"), "New Group…").OnTriggered(func() {
 		var ok bool
 		name := qt.QInputDialog_GetText4(a.win.QWidget, "New Group", "Group name:", qt.QLineEdit__Normal, "", &ok)
 		if ok && strings.TrimSpace(name) != "" {
@@ -276,7 +276,7 @@ func (a *App) contextMenu(pos *qt.QPoint) {
 	sm := menu.AddMenu2(themeIcon("network-server"), "Set Side of "+label)
 	for _, s := range []model.Side{model.SideBoth, model.SideClient, model.SideServer, model.SideUnknown} {
 		s := s
-		ac := sm.AddAction(s.Label())
+		ac := sm.AddActionWithText(s.Label())
 		ac.SetCheckable(true)
 		ac.SetChecked(len(mods) == 1 && mods[0].Side == s)
 		ac.OnTriggered(func() {
@@ -288,7 +288,7 @@ func (a *App) contextMenu(pos *qt.QPoint) {
 		})
 	}
 	menu.AddSeparator()
-	menu.AddAction3(themeIcon("edit-delete", "list-remove"), "Remove "+label).OnTriggered(func() {
+	menu.AddAction2(themeIcon("edit-delete", "list-remove"), "Remove "+label).OnTriggered(func() {
 		if len(mods) > 1 && qt.QMessageBox_Question(a.win.QWidget, "Remove mods", fmt.Sprintf("Remove %d mods from the pack?", len(mods))) != qt.QMessageBox__Yes {
 			return
 		}

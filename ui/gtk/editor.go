@@ -15,6 +15,7 @@ import (
 	"modpackmanager/internal/core"
 	"modpackmanager/internal/markup"
 	"modpackmanager/internal/model"
+	"modpackmanager/internal/version"
 )
 
 // editor holds the widgets refreshList rebuilds.
@@ -1047,7 +1048,7 @@ func (a *App) showAbout() {
 	ab := adw.NewAboutDialog()
 	ab.SetApplicationName("Modpack Manager")
 	ab.SetApplicationIcon("package-x-generic")
-	ab.SetVersion("0.1.0")
+	ab.SetVersion(version.String())
 	ab.SetComments("Edit Minecraft modpacks from Modrinth and CurseForge.")
 	ab.Present(a.win)
 }

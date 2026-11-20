@@ -9,16 +9,52 @@ A native desktop editor for Minecraft modpacks, written in Go.
 - Three export buttons: **Client**, **Common** (client + server) and **Server**, each as `.mrpack`, CurseForge `.zip`, or a ready-to-run zip with the jars downloaded and hash-checked
 - Native look per platform: **GTK4 + libadwaita** on GNOME and most Linux desktops, **Qt 6** on KDE Plasma, Windows and macOS. The `modpackmanager` launcher picks the right one (`MPM_UI=gtk|qt` to override).
 
+## Install
+
+**Linux:** download `modpackmanager-<version>-linux-x86_64-gtk.tar.gz` (GNOME and most desktops) or `…-qt.tar.gz` (KDE) from the Releases page, unpack it and run `./install.sh` (installs to `~/.local`; `PREFIX=/usr/local ./install.sh` for system-wide). The binaries are built on Ubuntu 24.04 and use your system's toolkit, so you need a distro at least that new (GTK 4.14 + libadwaita 1.5, or Qt 6.4). On Debian/Ubuntu the runtime packages are `libgtk-4-1 libadwaita-1-0 librsvg2-common` (GTK) or `libqt6widgets6t64 libqt6svg6 qt6-wayland` (Qt). Check the download against `SHA256SUMS`.
+
+**NixOS / Nix:** see [NixOS and Nix](#nixos-and-nix).
+
+**Windows:** the release has a `…-windows-x86_64-qt.zip` when its build succeeded (this build is experimental). Unzip it anywhere and run `modpackmanager-qt.exe`.
+
+**macOS:** no release build yet. Build from source (`brew install qt@6`, then `sh build.sh qt`); this is untested.
+
+## NixOS and Nix
+
+The repository is a flake that follows `nixos-unstable`. It builds the launcher plus both frontends, wrapped so that GTK schemas and Qt plugins are found:
+
+```sh
+nix run github:blacklizardcode/modpackmanager          # launcher + GTK + Qt, picks one per desktop
+nix run github:blacklizardcode/modpackmanager#gtk      # GTK only (smaller)
+nix run github:blacklizardcode/modpackmanager#qt       # Qt only
+```
+
+In a NixOS or home-manager flake configuration:
+
+```nix
+inputs.modpackmanager.url = "github:blacklizardcode/modpackmanager";
+inputs.modpackmanager.inputs.nixpkgs.follows = "nixpkgs";   # optional: build against your nixpkgs
+
+# then, either the package directly:
+environment.systemPackages = [ inputs.modpackmanager.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+# or through the overlay:
+nixpkgs.overlays = [ inputs.modpackmanager.overlays.default ];   # gives you pkgs.modpackmanager
+```
+
+`nix develop` gives a shell with Go, gopls, the GTK and Qt libraries, shellcheck and actionlint, and `nix flake check` builds and tests both variants.
+
+Maintaining the flake: Nix builds the Go modules from a hash, so after any change to `go.mod` or `go.sum` run `bash nix/update-vendor-hash.sh` and commit `nix/vendor-hash.txt` with them. Flakes only see files that git tracks, so `git add` new files before `nix build`. Commit `flake.lock` too (`nix flake update` bumps nixpkgs).
+
 ## Building
 
 Requires Go 1.24+ and the toolkit headers below.
 
 ```sh
 go mod tidy        # first time: fetches deps and verifies them against the Go checksum DB
-./build.sh         # launcher + GTK app   (GNOME and most Linux desktops)
-./build.sh qt      # Qt app               (KDE Plasma, Windows, macOS)
-./build.sh test    # tests (no network needed; the APIs are mocked)
-./build.sh install # into ~/.local, with a menu entry and .mrpack/.mpm file associations
+sh build.sh         # launcher + GTK app   (GNOME and most Linux desktops)
+sh build.sh qt      # Qt app               (KDE Plasma, Windows, macOS)
+sh build.sh test    # tests (no network needed; the APIs are mocked)
+sh build.sh install # into ~/.local, with a menu entry and .mrpack/.mpm file associations
 ```
 
 Then run `modpackmanager` (or `modpackmanager pack.mrpack`). It opens the GTK app on GNOME and similar desktops and the Qt app on KDE, picking whichever is installed if only one is. `MPM_UI=gtk|qt` forces one.
@@ -28,7 +64,7 @@ Then run `modpackmanager` (or `modpackmanager pack.mrpack`). It opens the GTK ap
 | GTK | Debian/Ubuntu: `libgtk-4-dev libadwaita-1-dev libgirepository1.0-dev` · Fedora: `gtk4-devel libadwaita-devel gobject-introspection-devel` · Arch: `gtk4 libadwaita gobject-introspection` |
 | Qt | Debian/Ubuntu: `qt6-base-dev` · Fedora: `qt6-qtbase-devel` · Arch: `qt6-base` · macOS: `brew install qt@6` · Windows: Qt 6 + MinGW (see the miqt README) |
 
-The first build of each frontend is slow (the GTK and Qt bindings are huge; 10–30 minutes and a few GB of RAM). Later builds are fast. Build them one at a time on machines with 8 GB of RAM or less.
+The first build of each frontend is slow (the GTK and Qt bindings are huge): about 20 minutes on two cores for GTK, and the Qt one needs far more memory. The Go compiler peaked at about 2 GB for the GTK bindings and about 6 GB for the Qt bindings, and a 7.5 GB machine ran out of memory when two builds overlapped. Later builds are fast. Build one frontend at a time on machines with 8 GB of RAM or less (`./build.sh` and `sh build.sh qt` are separate for that reason).
 
 The GTK app targets libadwaita **1.5** (Ubuntu 24.04, Debian 13, Fedora 40+, Arch), so it builds on older distros too. For SVG badges in descriptions, have `librsvg` installed (it normally is on GNOME); the Qt app needs the `qt6-svg` package for the same.
 
@@ -74,8 +110,22 @@ server-overrides/      server-only files
 
 Each mod stores its name, side (+ whether you locked it), group, notes, file path/hashes/download URLs, and its Modrinth and/or CurseForge IDs. Saves are atomic (temp file + rename).
 
+## Releases and CI
+
+`.github/workflows/ci.yml` tests on every push and pull request, builds the Linux tarballs (GTK and Qt, each smoke-tested headless), the experimental Windows zip, and runs `nix flake check`.
+
+The version number lives in one place, `internal/version/VERSION` (it feeds `modpackmanager version`, the About dialog, the Nix package and the release file names). To release:
+
+1. Edit `internal/version/VERSION` and commit.
+2. `git tag v<VERSION>` (it must match the file, the workflow checks) and `git push origin main v<VERSION>`.
+3. The workflow builds everything and creates a **draft** release with the files and `SHA256SUMS` attached. Review it on GitHub, then publish it. Nothing is public until you do.
+
+Running the workflow by hand (Actions → CI → Run workflow) does everything except create the release, so it works as a dry run. If a release attempt goes wrong, delete the draft and the tag (`git push --delete origin v<VERSION>`) and start over. `.github/dependabot.yml` keeps the SHA-pinned actions current.
+
 ## Known limitations
 
+- **Windows and macOS builds are not verified.** The Windows zip comes from a CI job that has never run on a real runner; if it fails it is left out of the release (with a warning) rather than blocking it. There is no macOS release at all.
+- The Nix package has so far only been evaluated, never built, and the Linux tarballs have only been run on the machine that built them.
 - **Modrinth's website only accepts `.mrpack` files whose downloads come from Modrinth, GitHub or GitLab.** Mods only on CurseForge are linked to CurseForge's CDN, which launchers like Prism accept but modrinth.com rejects. Use `--embed` (or the Embed option) to bundle those jars, but note that redistributing jars may break a mod's license or the author's CurseForge distribution setting.
 - CurseForge sometimes hides a file's download URL (author opted out of third-party downloads); the app falls back to the CDN URL, which can still fail for those files. Failed downloads are listed after an export.
 - Modrinth's side metadata is set by mod authors and is sometimes wrong; check the server export warnings and lock sides by hand where needed.

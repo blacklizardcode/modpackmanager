@@ -1,0 +1,14 @@
+# build output
+/bin/
+/dist/
+/modpackmanager
+/modpackmanager-gtk
+/modpackmanager-qt
+/cmd/*/modpackmanager
+/cmd/*/modpackmanager-gtk
+/cmd/*/modpackmanager-qt
+
+# nix
+/result
+/result-*
+.direnv/

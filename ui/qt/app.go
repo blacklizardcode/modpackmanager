@@ -111,7 +111,6 @@ func (a *App) buildToolbar() {
 	tb := qt.NewQToolBar3()
 	tb.SetMovable(false)
 	tb.SetToolButtonStyle(qt.ToolButtonTextBesideIcon)
-	tb.SetObjectName("main")
 	a.toolbar = tb
 
 	act := func(text, tip string, icon []string, key *qt.QKeySequence, f func(), editOnly bool) *qt.QAction {
@@ -132,7 +131,7 @@ func (a *App) buildToolbar() {
 			a.chooseOpen()
 		}
 	}, false)
-	act("Save", "Save as .mpm", []string{"document-save"}, qt.NewQKeySequence6(qt.QKeySequence__Save), a.save, true)
+	act("Save", "Save as .mpm", []string{"document-save"}, qt.NewQKeySequence6(qt.QKeySequence__Save), func() { a.save() }, true)
 	tb.AddSeparator()
 	act("Add Mods", "Search Modrinth and CurseForge", []string{"list-add"}, qt.NewQKeySequence2("Ctrl+Shift+A"), a.showSearch, true)
 	act("New Group", "Create a group", []string{"folder-new"}, nil, a.newGroup, true)
