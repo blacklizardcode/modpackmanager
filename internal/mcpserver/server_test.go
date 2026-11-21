@@ -235,7 +235,8 @@ func newFakeNet(t *testing.T) (*fakeNet, *core.Service) {
 // returns a folder for packs.
 func testDirs(t *testing.T) string {
 	root := t.TempDir()
-	for env, sub := range map[string]string{"MPM_CONFIG_DIR": "config", "MPM_CACHE_DIR": "cache", "HOME": "home"} {
+	// HOME is the home folder on Unix, USERPROFILE on Windows.
+	for env, sub := range map[string]string{"MPM_CONFIG_DIR": "config", "MPM_CACHE_DIR": "cache", "HOME": "home", "USERPROFILE": "home"} {
 		d := filepath.Join(root, sub)
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -995,7 +996,11 @@ func TestCreatePack(t *testing.T) {
 
 	// ~ is the home folder.
 	out = c.ok("create_pack", args("~/home.mpm", map[string]any{"loaderVersion": "0.16.9"}))
-	if out["path"] != filepath.Join(os.Getenv("HOME"), "home.mpm") {
+	home, err := os.UserHomeDir()
+	if err != nil || !strings.HasPrefix(home, filepath.Dir(dir)) {
+		t.Fatalf("the test's home folder isn't set: %q %v", home, err)
+	}
+	if out["path"] != filepath.Join(home, "home.mpm") {
 		t.Fatalf("~ path %v", out["path"])
 	}
 }
