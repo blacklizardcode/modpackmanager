@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -18,18 +19,47 @@ type Document struct {
 	ImportedFrom string
 	Kind         formats.Kind
 	Dirty        bool
+
+	// stamp identifies the file as this document last read or wrote it, to
+	// notice changes made by other programs (an AI assistant using the MCP
+	// server, the command line, a second window).
+	stamp fileStamp
+}
+
+type fileStamp struct {
+	info os.FileInfo // nil when the file couldn't be read
+}
+
+func stampOf(path string) fileStamp {
+	st, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}
+	}
+	// Windows looks a file's identity up lazily, by path, when it's first
+	// compared. Do it now, while the path still names this file.
+	os.SameFile(st, st)
+	return fileStamp{info: st}
+}
+
+// differs reports whether the file changed between two stamps. Programs that
+// save safely (like this one) replace the file, which shows up even when
+// the size and a coarse modification time stay the same.
+func (s fileStamp) differs(now fileStamp) bool {
+	a, b := s.info, now.info
+	return a.Size() != b.Size() || !a.ModTime().Equal(b.ModTime()) || !os.SameFile(a, b)
 }
 
 // Open loads any supported file. Imported (non-.mpm) packs get no Path so the
 // first save asks where to store the .mpm file.
 func Open(path string) (*Document, error) {
+	stamp := stampOf(path) // before reading: a change during the read shows up later
 	p, kind, err := formats.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", filepath.Base(path), err)
 	}
 	d := &Document{Pack: p, Kind: kind}
 	if kind == formats.KindMPM {
-		d.Path = path
+		d.Path, d.stamp = path, stamp
 	} else {
 		d.ImportedFrom = path
 		d.Dirty = true
@@ -77,7 +107,36 @@ func (d *Document) Save(path string) error {
 	d.Path = path
 	d.Kind = formats.KindMPM
 	d.Dirty = false
+	d.stamp = stampOf(path)
 	return nil
+}
+
+// ChangedOnDisk reports whether another program changed or replaced the
+// pack's file since this document last read or wrote it.
+func (d *Document) ChangedOnDisk() bool {
+	if d.Path == "" || d.stamp.info == nil {
+		return false
+	}
+	now := stampOf(d.Path)
+	return now.info != nil && d.stamp.differs(now)
+}
+
+// Reload reads the pack from its file again, dropping unsaved changes.
+func (d *Document) Reload() error {
+	nd, err := Open(d.Path)
+	if err != nil {
+		return err
+	}
+	d.Pack, d.Kind, d.Dirty, d.stamp = nd.Pack, nd.Kind, false, nd.stamp
+	return nil
+}
+
+// AcknowledgeDiskChange accepts the file as it is now without reloading it:
+// ChangedOnDisk reports only later changes, and saving replaces the file.
+func (d *Document) AcknowledgeDiskChange() {
+	if d.Path != "" {
+		d.stamp = stampOf(d.Path)
+	}
 }
 
 // Title for window headers.

@@ -38,6 +38,7 @@ type App struct {
 	gen      int // bumped on every refresh; async callbacks check it
 	recentLW *qt.QListWidget
 	editActs []*qt.QAction // disabled while no pack is open
+	asking   bool          // a question about the file changing on disk is open
 }
 
 // ui runs f on the Qt main thread (asynchronously).
@@ -70,6 +71,7 @@ func Run(args []string) int {
 	a.win.SetCentralWidget(a.stack.QWidget)
 	a.acceptJarDrops()
 	a.showWelcome()
+	a.watchDisk()
 
 	a.win.OnCloseEvent(func(super func(*qt.QCloseEvent), ev *qt.QCloseEvent) {
 		a.cfg.WindowWidth, a.cfg.WindowHeight = a.win.Width(), a.win.Height()
@@ -335,6 +337,15 @@ func (a *App) saveAs() bool {
 }
 
 func (a *App) saveTo(p string) bool {
+	if a.doc.Path != "" && filepath.Clean(p) == filepath.Clean(a.doc.Path) && a.doc.ChangedOnDisk() {
+		save, reloaded := a.confirmOverwrite(p)
+		if reloaded {
+			return true // nothing is unsaved any more
+		}
+		if !save {
+			return false
+		}
+	}
 	if err := a.doc.Save(p); err != nil {
 		a.errorBox("Couldn't save", err.Error())
 		return false

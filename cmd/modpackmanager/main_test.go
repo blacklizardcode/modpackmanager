@@ -85,3 +85,14 @@ func TestCmdAdd(t *testing.T) {
 		t.Error("adding to a non-.mpm file must fail")
 	}
 }
+
+func TestCmdMCPRejectsUnknownOptions(t *testing.T) {
+	stdout := os.Stdout
+	err := cmdMCP([]string{"--readonly"})
+	if err == nil || !strings.Contains(err.Error(), "--read-only") {
+		t.Fatalf("got %v", err)
+	}
+	if os.Stdout != stdout {
+		t.Fatal("stdout was redirected before the options were checked")
+	}
+}

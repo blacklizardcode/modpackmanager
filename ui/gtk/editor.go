@@ -817,6 +817,14 @@ func (a *App) saveAsThen(after func()) {
 }
 
 func (a *App) saveTo(path string, after func()) {
+	if a.doc.Path != "" && filepath.Clean(path) == filepath.Clean(a.doc.Path) && a.doc.ChangedOnDisk() {
+		a.confirmOverwrite(path, after)
+		return
+	}
+	a.writeDoc(path, after)
+}
+
+func (a *App) writeDoc(path string, after func()) {
 	if err := a.doc.Save(path); err != nil {
 		a.error("Couldn't save", err.Error())
 		return
@@ -1188,7 +1196,7 @@ func (a *App) addJarPaths(paths []string) {
 			}
 			title, problems := core.JarSummary(results, prep.Report)
 			if len(problems) == 0 {
-				a.toast("%s", markup.Escape(markup.Pango, title))
+				a.toast("%s", title)
 				return
 			}
 			a.error(title, "• "+strings.Join(problems, "\n• "))

@@ -40,6 +40,14 @@ bin="$prefix/bin"
 [ "$("$bin/modpackmanager" version)" = "modpackmanager $want" ] || fail "version output is not 'modpackmanager $want'"
 "$bin/modpackmanager" help >/dev/null || fail "'modpackmanager help' failed"
 
+# The MCP server answers a request, then exits when its input ends.
+mcp=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' |
+	timeout 10 "$bin/modpackmanager" mcp) || fail "'modpackmanager mcp' failed"
+case "$mcp" in
+*'"supportedVersions"'*) ;;
+*) fail "'modpackmanager mcp' did not answer server/discover: $mcp" ;;
+esac
+
 [ -f "$prefix/share/applications/io.github.blakka.ModpackManager.desktop" ] || fail "desktop file was not installed"
 [ -f "$prefix/share/mime/packages/modpackmanager.xml" ] || fail "MIME file was not installed"
 if command -v desktop-file-validate >/dev/null 2>&1; then

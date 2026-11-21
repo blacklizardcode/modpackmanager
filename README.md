@@ -8,6 +8,7 @@ A native desktop editor for Minecraft modpacks, written in Go.
 - Add your own **`.jar` files** (Add Mods ▾ → Add JAR Files…, Ctrl+Shift+J, or drag them onto the window; a dropped folder adds the jars in it). A jar that is on Modrinth is linked to it; any other jar is stored in the pack and bundled into exports. Name, version, side and icon come from the jar's `fabric.mod.json`, `quilt.mod.json` or `mods.toml`, and adding a newer build of a stored jar replaces the old one
 - Descriptions render natively: Markdown (Modrinth) and HTML (CurseForge), including images, lists, tables and code
 - Three export buttons: **Client**, **Common** (client + server) and **Server**, each as `.mrpack`, CurseForge `.zip`, or a ready-to-run zip with the jars downloaded and hash-checked
+- **AI assistants** (Claude Code, Claude Desktop, other MCP clients) can read, edit and export packs through the built-in MCP server, `modpackmanager mcp`
 - Native look per platform: **GTK4 + libadwaita** on GNOME and most Linux desktops, **Qt 6** on KDE Plasma, Windows and macOS. The `modpackmanager` launcher picks the right one (`MPM_UI=gtk|qt` to override).
 
 ## Install
@@ -79,12 +80,54 @@ modpackmanager export pack.mpm server zip --with-common   # server pack with jar
 modpackmanager export pack.mpm client mrpack              # client-only mods
 modpackmanager export pack.mpm common curseforge          # mods needed on both sides
 modpackmanager add pack.mpm mymod-1.2.jar --side client   # add jar files (or a folder of them)
+modpackmanager mcp [--read-only]                          # MCP server for AI assistants (below)
 ```
 
 Export targets: `client` (client-only mods), `common` (needed on both), `server` (server-only mods), `full`.
 `--with-common` adds the common mods to a client/server export so it is installable on its own (the GUI does this by default for server exports, because a server can't start without them).
 `--embed` puts jars that aren't hosted on Modrinth inside the `.mrpack` instead of linking to them.
 `add` works on `.mpm` files; `--side` sets (and locks) the side, `--offline` skips the Modrinth lookup.
+
+## AI assistants (MCP)
+
+`modpackmanager mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server: an AI assistant starts it and talks to it over stdin/stdout, so you can ask things like "make a Fabric 1.21.1 pack with Sodium and Lithium and export a server zip".
+
+**Claude Code:**
+
+```sh
+claude mcp add --scope user modpackmanager -- modpackmanager mcp
+```
+
+**Claude Desktop** and most other clients take JSON. In Claude Desktop, open Settings → Developer → Edit Config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows, `~/.config/Claude/claude_desktop_config.json` on the Linux beta), add the server and restart the app:
+
+```json
+{
+  "mcpServers": {
+    "modpackmanager": {
+      "command": "/full/path/to/modpackmanager",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Use the full path (`command -v modpackmanager`): Claude Desktop starts servers with a minimal `PATH`. On Nix, install the package (see above) instead of pointing the client at `nix run`, which can take long enough to build that the client gives up.
+
+| Tool | Does |
+| --- | --- |
+| `pack_info`, `list_mods` | Summarise a pack or list its mods (ids, sides, groups); also reads `.mrpack` and CurseForge `.zip` |
+| `search_mods` | Search Modrinth (and CurseForge with an API key), filtered by a pack's Minecraft version and loader |
+| `create_pack`, `import_pack` | Make a new `.mpm`, or turn a `.mrpack`/`.zip` into one |
+| `update_pack_info` | Change name, version, author, summary or loader version |
+| `add_mod`, `add_jars` | Add Modrinth/CurseForge projects (with required dependencies) or local `.jar` files |
+| `remove_mods`, `set_side`, `move_to_group` | Edit mods; sides set this way are locked |
+| `export_pack` | Export client/common/server/full as `.mrpack`, CurseForge `.zip` or server `.zip` |
+
+- Only `.mpm` files are edited, and every change is saved straight away. There is no undo.
+- No existing file is replaced unless the assistant passes `overwrite: true`, and an export never replaces its own pack.
+- The server can read and write wherever your user account can, at the paths the assistant gives it. `modpackmanager mcp --read-only` offers only `pack_info`, `list_mods` and `search_mods`.
+- If the pack is open in the app, the app reloads it within about two seconds. With unsaved changes it asks first, and saving over the assistant's changes asks too.
+- It speaks MCP 2026-07-28 and the older initialize-based revisions back to 2024-11-05, over stdio only.
 
 ## CurseForge API key
 

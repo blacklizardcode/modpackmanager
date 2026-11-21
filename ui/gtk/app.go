@@ -41,11 +41,19 @@ func Run(args []string) int {
 	a := &App{cfg: config.Load(), jarIcons: map[string]*gdk.Texture{}}
 	a.svc = core.New(a.cfg.APIKey())
 	a.app = adw.NewApplication(appID, gio.ApplicationHandlesOpen)
-	a.app.ConnectActivate(func() { a.activate(""); a.showWelcome() })
+	a.app.ConnectActivate(func() {
+		a.activate("")
+		// Launching the app again only brings the window forward; it must not
+		// hide an open pack (whose unsaved changes a later open would drop).
+		if a.doc == nil {
+			a.showWelcome()
+		}
+	})
 	a.app.ConnectOpen(func(files []gio.Filer, hint string) {
 		a.activate("")
 		if len(files) > 0 {
-			a.openPath(files[0].Path())
+			path := files[0].Path()
+			a.confirmDiscard(func() { a.openPath(path) })
 		}
 	})
 	return a.app.Run(append([]string{os.Args[0]}, args...))
@@ -66,6 +74,10 @@ func (a *App) activate(_ string) {
 	loadCSS()
 	a.toasts = adw.NewToastOverlay()
 	a.win.SetContent(a.toasts)
+	glib.TimeoutAdd(diskCheckMS, func() bool {
+		a.checkDisk()
+		return true
+	})
 	a.win.ConnectCloseRequest(func() bool {
 		a.cfg.WindowWidth, a.cfg.WindowHeight = a.win.DefaultSize()
 		_ = a.cfg.Save()
@@ -78,9 +90,11 @@ func (a *App) activate(_ string) {
 	a.win.Present()
 }
 
-// toast shows a short, non-blocking message.
+// toast shows a short, non-blocking message (plain text, not markup, so
+// names with & or < show as they are).
 func (a *App) toast(format string, args ...any) {
 	t := adw.NewToast(fmt.Sprintf(format, args...))
+	t.SetUseMarkup(false)
 	t.SetTimeout(4)
 	a.toasts.AddToast(t)
 }

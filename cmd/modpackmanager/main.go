@@ -6,6 +6,7 @@
 //	modpackmanager export <pack> <client|common|server|full> <mrpack|curseforge|zip> [out] [--with-common] [--embed]
 //	modpackmanager convert <pack> <out.mpm>
 //	modpackmanager add <pack.mpm> <file.jar|folder>... [--side client|server|both] [--offline]
+//	modpackmanager mcp [--read-only]       serve MCP on stdin/stdout for AI assistants
 //	modpackmanager version
 //
 // Set MPM_UI=gtk or MPM_UI=qt to force a toolkit.
@@ -13,16 +14,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"modpackmanager/internal/config"
 	"modpackmanager/internal/core"
 	"modpackmanager/internal/formats"
+	"modpackmanager/internal/mcpserver"
 	"modpackmanager/internal/model"
 	"modpackmanager/internal/version"
 )
@@ -43,6 +48,9 @@ func main() {
 		case "add":
 			exit(cmdAdd(args[1:]))
 			return
+		case "mcp":
+			exit(cmdMCP(args[1:]))
+			return
 		case "version", "-v", "--version":
 			fmt.Println("modpackmanager", version.String())
 			return
@@ -60,6 +68,7 @@ const usage = `usage:
   modpackmanager export <pack> <client|common|server|full> <mrpack|curseforge|zip> [out] [--with-common] [--embed]
   modpackmanager convert <pack> <out.mpm>
   modpackmanager add <pack.mpm> <file.jar|folder>... [--side client|server|both] [--offline]
+  modpackmanager mcp [--read-only]
   modpackmanager version`
 
 func exit(err error) {
@@ -296,6 +305,31 @@ func cmdAdd(args []string) error {
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d of %d files were not added", failed, len(results))
+	}
+	return nil
+}
+
+// cmdMCP serves the Model Context Protocol on stdin/stdout, for AI assistants
+// such as Claude Desktop or Claude Code. Diagnostics go to stderr; stdout
+// carries nothing but protocol messages.
+func cmdMCP(args []string) error {
+	opts := mcpserver.Options{Log: os.Stderr}
+	for _, a := range args {
+		switch a {
+		case "--read-only":
+			opts.ReadOnly = true
+		default:
+			return fmt.Errorf("unknown option %s (usage: modpackmanager mcp [--read-only])", a)
+		}
+	}
+	// stdout belongs to the protocol: anything else that prints goes to stderr.
+	proto := os.Stdout
+	os.Stdout = os.Stderr
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	srv := mcpserver.New(core.New(config.Load().APIKey()), opts)
+	if err := srv.Serve(ctx, os.Stdin, proto); err != nil && !errors.Is(err, context.Canceled) {
+		return err
 	}
 	return nil
 }

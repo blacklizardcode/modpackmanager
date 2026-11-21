@@ -11,8 +11,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"modpackmanager/internal/api/curseforge"
 	"modpackmanager/internal/api/modrinth"
@@ -33,7 +37,14 @@ func h512(b []byte) string { s := sha512.Sum512(b); return hex.EncodeToString(s[
 
 type mock struct {
 	srv  *httptest.Server
+	mu   sync.Mutex // the handlers run concurrently (searches query both sites at once)
 	hits map[string]int
+}
+
+func (m *mock) hit(key string) {
+	m.mu.Lock()
+	m.hits[key]++
+	m.mu.Unlock()
 }
 
 func newMock(t *testing.T) (*mock, *Service) {
@@ -70,7 +81,7 @@ func newMock(t *testing.T) (*mock, *Service) {
 		return ids
 	}
 	mux.HandleFunc("/mr/", func(w http.ResponseWriter, r *http.Request) {
-		m.hits[r.Method+" "+r.URL.Path]++
+		m.hit(r.Method + " " + r.URL.Path)
 		if r.Header.Get("User-Agent") == "" {
 			t.Error("missing user agent")
 		}
@@ -159,7 +170,7 @@ func newMock(t *testing.T) (*mock, *Service) {
 		"hashes": []map[string]any{{"value": h1(jars["jei.jar"]), "algo": 1}}}
 	cfMod := map[string]any{"id": 238222, "name": "Just Enough Items", "slug": "jei", "summary": "Recipes", "classId": 6, "authors": []map[string]string{{"name": "mezz"}}, "logo": map[string]string{"thumbnailUrl": "https://i/j.png"}}
 	mux.HandleFunc("/cf/", func(w http.ResponseWriter, r *http.Request) {
-		m.hits[r.Method+" "+r.URL.Path]++
+		m.hit(r.Method + " " + r.URL.Path)
 		if r.Header.Get("x-api-key") != "KEY" {
 			w.WriteHeader(403)
 			return
@@ -184,7 +195,7 @@ func newMock(t *testing.T) (*mock, *Service) {
 		}
 	})
 	mux.HandleFunc("/cdn/", func(w http.ResponseWriter, r *http.Request) {
-		m.hits["cdn"]++
+		m.hit("cdn")
 		b, ok := jars[strings.TrimPrefix(r.URL.Path, "/cdn/")]
 		if !ok {
 			http.NotFound(w, r)
@@ -526,5 +537,74 @@ func TestSuggestedFileName(t *testing.T) {
 	p.Name, p.Version = "My: Pack", "1.0"
 	if got := SuggestedFileName(p, ExportOptions{Target: TargetServer, Format: FormatZip}); got != "My_-Pack-1.0-server.zip" {
 		t.Fatal(got)
+	}
+}
+
+func TestDocumentNoticesChangesOnDisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p.mpm")
+	d := NewDocument("Watched", "1.21.1", "fabric", "0.16.9")
+	if err := d.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if d.ChangedOnDisk() {
+		t.Fatal("our own save counts as a change")
+	}
+	// Another program saves the same file.
+	other, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.Pack.Name = "Changed elsewhere"
+	time.Sleep(20 * time.Millisecond) // make sure the modification time moves
+	if err := other.Save(""); err != nil {
+		t.Fatal(err)
+	}
+	if !d.ChangedOnDisk() {
+		t.Fatal("change not noticed")
+	}
+	d.Pack.Name = "unsaved edit"
+	d.Dirty = true
+	if err := d.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if d.Pack.Name != "Changed elsewhere" || d.Dirty || d.ChangedOnDisk() {
+		t.Fatalf("after reload: %q dirty=%v changed=%v", d.Pack.Name, d.Dirty, d.ChangedOnDisk())
+	}
+	// A replacement with the same size and modification time (coarse file
+	// system clocks) is still noticed.
+	st, _ := os.Stat(path)
+	same, _ := Open(path)
+	same.Pack.Name = "Changed elsewherE" // same length
+	if err := same.Save(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, st.ModTime(), st.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if st2, _ := os.Stat(path); st2.Size() != st.Size() || !st2.ModTime().Equal(st.ModTime()) {
+		t.Fatal("test setup: size or time differs")
+	}
+	if !d.ChangedOnDisk() {
+		t.Fatal("same-size replacement not noticed")
+	}
+	// Acknowledging hides this change, but not the next one.
+	d.AcknowledgeDiskChange()
+	if d.ChangedOnDisk() {
+		t.Fatal("acknowledged change still reported")
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := other.Save(""); err != nil {
+		t.Fatal(err)
+	}
+	if !d.ChangedOnDisk() {
+		t.Fatal("change after acknowledging not noticed")
+	}
+	// A deleted file isn't a change to reload.
+	os.Remove(path)
+	if d.ChangedOnDisk() {
+		t.Fatal("deleted file reported as changed")
+	}
+	if NewDocument("x", "", "fabric", "").ChangedOnDisk() {
+		t.Fatal("unsaved document reported as changed")
 	}
 }
